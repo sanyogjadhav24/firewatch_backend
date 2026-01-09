@@ -137,8 +137,50 @@ router.get("/reports/:id", async (req, res) => {
     return res.json({
       reportId: String(report._id),
       status: report.status,
+      title: report.title || "",
+      description: report.description || "",
+      severity: report.severity || "LOW",
+      lat: report.lat || 0.0,
+      lng: report.lng || 0.0,
+      deviceName: report.deviceName || "",
+      deviceTime: report.deviceTime || "",
+      imageUrl: report.image && report.image.url ? report.image.url : "",
+      createdAt: report.createdAt ? report.createdAt.toISOString() : "",
       aiResult: report.aiResult || null
     });
+  } catch (e) {
+    return res.status(500).json({ error: "Server error", detail: e.message });
+  }
+});
+
+// GET /reports/mine  (requires auth)
+router.get("/reports/mine", requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 50);
+
+    const reports = await Report.find({ uid }).sort({ createdAt: -1 }).limit(limit).lean();
+
+    const formattedReports = reports.map((report) => {
+      const obj = {
+        reportId: String(report._id),
+        title: report.title || "",
+        severity: report.severity || "LOW",
+        status: report.status || "",
+        createdAt: report.createdAt ? report.createdAt.toISOString() : "",
+        imageUrl: report.image && report.image.url ? report.image.url : "",
+        lat: report.lat || 0.0,
+        lng: report.lng || 0.0
+      };
+
+      if (report.aiResult) {
+        obj.aiResult = report.aiResult;
+      }
+
+      return obj;
+    });
+
+    return res.json({ reports: formattedReports });
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: e.message });
   }
