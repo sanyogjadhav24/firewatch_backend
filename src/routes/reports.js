@@ -143,11 +143,24 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
     const publicId = `report_${Date.now()}`;
     const folder = `firewatch/reports/${uid}`;
 
-    const cloud = await uploadBufferToCloudinary({
-      buffer: req.file.buffer,
-      folder,
-      publicId
-    });
+    console.log("Starting Cloudinary upload...");
+    const cloudStartTime = Date.now();
+    
+    let cloud;
+    try {
+      cloud = await uploadBufferToCloudinary({
+        buffer: req.file.buffer,
+        folder,
+        publicId
+      });
+      console.log(`✅ Cloudinary upload completed in ${Date.now() - cloudStartTime}ms`);
+    } catch (cloudErr) {
+      console.error("❌ Cloudinary upload failed:", cloudErr.message);
+      return res.status(500).json({ 
+        error: "Image upload failed", 
+        detail: cloudErr.message.includes("timeout") ? "Upload timeout - image too large or slow connection" : cloudErr.message 
+      });
+    }
 
     const report = await Report.create({
       uid,
@@ -171,7 +184,12 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
     // Analyze in "background" (no queue, but async after response)
     setImmediate(async () => {
       try {
+        console.log(`Starting AI analysis for report ${report._id}...`);
+        const aiStartTime = Date.now();
+        
         const ai = await analyzeImageWithGroq(report.image.url);
+        
+        console.log(`✅ AI analysis completed in ${Date.now() - aiStartTime}ms for report ${report._id}`);
 
         // Decision rules (same as our plan)
         let status = "REJECTED_AI";
@@ -201,6 +219,12 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
           { new: true }
         );
       } catch (e) {
+        console.error(`❌ AI analysis failed for report ${report._id}:`, e.message);
+        if (e.response) {
+          console.error("API response status:", e.response.status);
+          console.error("API response data:", JSON.stringify(e.response.data).slice(0, 500));
+        }
+        
         await Report.findByIdAndUpdate(
           report._id,
           {

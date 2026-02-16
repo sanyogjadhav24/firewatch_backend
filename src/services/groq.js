@@ -6,6 +6,8 @@ async function analyzeImageWithGroq(imageUrl) {
 
   const model = process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-maverick-17b-128e-instruct";
 
+  console.log(`Calling Groq API with model: ${model}`);
+
   const prompt = `
 You are a safety/validation classifier for a fire reporting app.
 Given an image, decide:
@@ -27,30 +29,44 @@ Rules:
 - If uncertain, lower confidence and explain.
 `;
 
-  const resp = await axios.post(
-    "https://api.groq.com/openai/v1/chat/completions",
-    {
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: imageUrl } }
-          ]
-        }
-      ]
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+  let resp;
+  try {
+    resp = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: imageUrl } }
+            ]
+          }
+        ]
       },
-      timeout: 30000
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 60000
+      }
+    );
+  } catch (axiosError) {
+    if (axiosError.code === 'ECONNABORTED') {
+      throw new Error("Groq API timeout after 60 seconds - vision model may be overloaded");
     }
-  );
+    if (axiosError.response) {
+      const status = axiosError.response.status;
+      const statusText = axiosError.response.statusText || "";
+      const errData = axiosError.response.data;
+      throw new Error(`Groq API error ${status} ${statusText}: ${JSON.stringify(errData).slice(0, 200)}`);
+    }
+    throw new Error(`Groq API request failed: ${axiosError.message}`);
+  }
 
   const content = resp.data?.choices?.[0]?.message?.content;
   if (!content) throw new Error("Groq returned empty content");
