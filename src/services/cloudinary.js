@@ -17,13 +17,20 @@ async function uploadBufferToCloudinary({ buffer, folder, publicId }) {
   initCloudinary();
 
   return new Promise((resolve, reject) => {
+    // Add 45 second timeout for Cloudinary upload
+    const timeoutId = setTimeout(() => {
+      reject(new Error("Cloudinary upload timeout after 45 seconds"));
+    }, 45000);
+
     const stream = cloudinary.uploader.upload_stream(
       {
         folder,
         public_id: publicId,
-        resource_type: "image"
+        resource_type: "image",
+        timeout: 60000
       },
       (err, result) => {
+        clearTimeout(timeoutId);
         if (err) return reject(err);
         resolve(result);
       }
