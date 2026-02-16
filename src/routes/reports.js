@@ -8,6 +8,103 @@ const { analyzeImageWithGroq } = require("../services/groq");
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// Root endpoint
+router.get("/", (req, res) => {
+  res.json({ 
+    service: "FireWatch Backend API",
+    version: "1.0.0",
+    status: "running",
+    endpoints: [
+      "GET /health",
+      "GET /reports",
+      "POST /reports (auth required)",
+      "GET /reports/mine (auth required)",
+      "GET /reports/:id",
+      "POST /reports/:id/override (auth required)"
+    ]
+  });
+});
+
+// GET /reports (list all reports)
+router.get("/reports", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const skip = (page - 1) * limit;
+
+    // Optional filters
+    const filter = {};
+    if (req.query.status) {
+      filter.status = req.query.status.toUpperCase();
+    }
+    if (req.query.severity) {
+      filter.severity = req.query.severity.toUpperCase();
+    }
+
+    const [reports, total] = await Promise.all([
+      Report.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Report.countDocuments(filter)
+    ]);
+
+    const formattedReports = reports.map((report) => ({
+      reportId: String(report._id),
+      title: report.title || "",
+      severity: report.severity || "LOW",
+      status: report.status || "",
+      createdAt: report.createdAt ? report.createdAt.toISOString() : "",
+      imageUrl: report.image && report.image.url ? report.image.url : "",
+      lat: report.lat || 0.0,
+      lng: report.lng || 0.0
+    }));
+
+    return res.json({ 
+      reports: formattedReports,
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (e) {
+    console.error("GET /reports error:", e);
+    return res.status(500).json({ error: "Server error", detail: e.message });
+  }
+});
+
+// GET /reports/mine (must come BEFORE /reports/:id to avoid conflict)
+router.get("/reports/mine", requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 50);
+
+    const reports = await Report.find({ uid }).sort({ createdAt: -1 }).limit(limit).lean();
+
+    const formattedReports = reports.map((report) => {
+      const obj = {
+        reportId: String(report._id),
+        title: report.title || "",
+        severity: report.severity || "LOW",
+        status: report.status || "",
+        createdAt: report.createdAt ? report.createdAt.toISOString() : "",
+        imageUrl: report.image && report.image.url ? report.image.url : "",
+        lat: report.lat || 0.0,
+        lng: report.lng || 0.0
+      };
+
+      if (report.aiResult) {
+        obj.aiResult = report.aiResult;
+      }
+
+      return obj;
+    });
+
+    return res.json({ reports: formattedReports });
+  } catch (e) {
+    return res.status(500).json({ error: "Server error", detail: e.message });
+  }
+});
+
 // POST /reports  (requires auth)
 router.post("/reports", requireAuth, upload.single("image"), async (req, res) => {
   try {
@@ -148,39 +245,6 @@ router.get("/reports/:id", async (req, res) => {
       createdAt: report.createdAt ? report.createdAt.toISOString() : "",
       aiResult: report.aiResult || null
     });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: e.message });
-  }
-});
-
-// GET /reports/mine  (requires auth)
-router.get("/reports/mine", requireAuth, async (req, res) => {
-  try {
-    const uid = req.user.uid;
-    const limit = Math.min(parseInt(req.query.limit) || 50, 50);
-
-    const reports = await Report.find({ uid }).sort({ createdAt: -1 }).limit(limit).lean();
-
-    const formattedReports = reports.map((report) => {
-      const obj = {
-        reportId: String(report._id),
-        title: report.title || "",
-        severity: report.severity || "LOW",
-        status: report.status || "",
-        createdAt: report.createdAt ? report.createdAt.toISOString() : "",
-        imageUrl: report.image && report.image.url ? report.image.url : "",
-        lat: report.lat || 0.0,
-        lng: report.lng || 0.0
-      };
-
-      if (report.aiResult) {
-        obj.aiResult = report.aiResult;
-      }
-
-      return obj;
-    });
-
-    return res.json({ reports: formattedReports });
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: e.message });
   }
