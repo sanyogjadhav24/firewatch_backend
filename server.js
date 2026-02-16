@@ -18,13 +18,21 @@ app.use("/", reportsRouter);
 
 const port = process.env.PORT || 8080;
 
+// Connect to DB
 connectDb()
   .then(() => {
-    app.listen(port, "0.0.0.0", () => {
-      console.log(`✅ FireWatch backend running on http://0.0.0.0:${port}`);
-    });
+    console.log("✅ Database connected");
   })
   .catch((err) => {
     console.error("❌ DB connection failed:", err);
-    process.exit(1);
   });
+
+// Start server only if not in Vercel serverless environment
+if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`✅ FireWatch backend running on http://0.0.0.0:${port}`);
+  });
+}
+
+// Export for Vercel serverless
+module.exports = app;
