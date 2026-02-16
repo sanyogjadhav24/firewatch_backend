@@ -1,27 +1,38 @@
 const admin = require("firebase-admin");
-const fs = require("fs");
-const path = require("path");
-
-let initialized = false;
 
 function initFirebaseAdmin() {
-  if (initialized) return;
-
-  const saPath = path.join(process.cwd(), "firebaseServiceAccount.json");
-  if (!fs.existsSync(saPath)) {
-    throw new Error(
-      "firebaseServiceAccount.json missing. Add it in backend root (DO NOT COMMIT)."
-    );
+  // Check if already initialized
+  if (admin.apps.length > 0) {
+    console.log("✅ Firebase Admin already initialized for project:", admin.app().options.projectId);
+    return;
   }
 
-  const serviceAccount = require(saPath);
+  // Build service account from environment variables
+  const serviceAccount = {
+    type: process.env.FIREBASE_TYPE,
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+    private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    client_id: process.env.FIREBASE_CLIENT_ID,
+    auth_uri: process.env.FIREBASE_AUTH_URI,
+    token_uri: process.env.FIREBASE_TOKEN_URI,
+    auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
+    client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
+    universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN
+  };
+
+  if (!serviceAccount.project_id || !serviceAccount.private_key || !serviceAccount.client_email) {
+    throw new Error(
+      "Firebase credentials missing in .env file. Check FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, and FIREBASE_CLIENT_EMAIL."
+    );
+  }
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
 
-  initialized = true;
-  console.log("✅ Firebase Admin initialized");
+  console.log("✅ Firebase Admin initialized for project:", serviceAccount.project_id);
 }
 
 async function requireAuth(req, res, next) {
