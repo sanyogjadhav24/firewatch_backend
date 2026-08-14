@@ -4,7 +4,7 @@ const Report = require("../models/Report");
 const { connectDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { uploadBufferToCloudinary } = require("../services/cloudinary");
-const { analyzeImageWithGroq } = require("../services/groq");
+const { analyzeImageWithOpenRouter } = require("../services/openrouter");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -192,7 +192,7 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
         console.log(`Starting AI analysis for report ${report._id}...`);
         const aiStartTime = Date.now();
         
-        const ai = await analyzeImageWithGroq(report.image.url);
+        const ai = await analyzeImageWithOpenRouter(report.image.url);
         
         console.log(`✅ AI analysis completed in ${Date.now() - aiStartTime}ms for report ${report._id}`);
 
@@ -243,7 +243,7 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
                 suspectedAIGenerated: false,
                 aiGenConfidence: 0,
                 reasons: ["AI verification failed: " + e.message],
-                model: process.env.GROQ_VISION_MODEL || "",
+                model: process.env.OPENROUTER_MODEL || "",
                 checkedAt: new Date()
               }
             },
