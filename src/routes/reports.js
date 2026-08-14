@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const Report = require("../models/Report");
+const { connectDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { uploadBufferToCloudinary } = require("../services/cloudinary");
 const { analyzeImageWithGroq } = require("../services/groq");
@@ -108,6 +109,8 @@ router.get("/reports/mine", requireAuth, async (req, res) => {
 // POST /reports  (requires auth)
 router.post("/reports", requireAuth, upload.single("image"), async (req, res) => {
   try {
+    await connectDb();
+
     const uid = req.user.uid;
 
     if (!req.file || !req.file.buffer) {
@@ -184,6 +187,8 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
     // Analyze in "background" (no queue, but async after response)
     setImmediate(async () => {
       try {
+        await connectDb();
+
         console.log(`Starting AI analysis for report ${report._id}...`);
         const aiStartTime = Date.now();
         
@@ -225,22 +230,28 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
           console.error("API response data:", JSON.stringify(e.response.data).slice(0, 500));
         }
         
-        await Report.findByIdAndUpdate(
-          report._id,
-          {
-            status: "REJECTED_AI",
-            aiResult: {
-              isFire: false,
-              fireConfidence: 0,
-              suspectedAIGenerated: false,
-              aiGenConfidence: 0,
-              reasons: ["AI verification failed: " + e.message],
-              model: process.env.GROQ_VISION_MODEL || "",
-              checkedAt: new Date()
-            }
-          },
-          { new: true }
-        );
+        try {
+          await connectDb();
+
+          await Report.findByIdAndUpdate(
+            report._id,
+            {
+              status: "REJECTED_AI",
+              aiResult: {
+                isFire: false,
+                fireConfidence: 0,
+                suspectedAIGenerated: false,
+                aiGenConfidence: 0,
+                reasons: ["AI verification failed: " + e.message],
+                model: process.env.GROQ_VISION_MODEL || "",
+                checkedAt: new Date()
+              }
+            },
+            { new: true }
+          );
+        } catch (updateErr) {
+          console.error(`❌ Failed to persist AI error state for report ${report._id}:`, updateErr.message);
+        }
       }
     });
   } catch (e) {
