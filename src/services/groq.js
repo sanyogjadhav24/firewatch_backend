@@ -4,8 +4,7 @@ async function analyzeImageWithGroq(imageUrl) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY missing");
 
-  const models = getModelCandidates();
-  let lastError = null;
+  const model = String(process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-maverick-17b-128e-instruct").trim();
 
   const prompt = `
 You are a safety/validation classifier for a fire reporting app.
@@ -28,85 +27,62 @@ Rules:
 - If uncertain, lower confidence and explain.
 `;
 
-  for (const model of models) {
-    console.log(`Calling Groq API with model: ${model}`);
+  console.log(`Calling Groq API with model: ${model}`);
 
-    try {
-      const resp = await axios.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          model,
-          temperature: 0,
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: imageUrl } }
-              ]
-            }
-          ]
+  let resp;
+  try {
+    resp = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: imageUrl } }
+            ]
+          }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
         },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
-          },
-          timeout: 60000
-        }
-      );
-
-      const content = resp.data?.choices?.[0]?.message?.content;
-      if (!content) throw new Error("Groq returned empty content");
-
-      let parsed;
-      try {
-        parsed = JSON.parse(content);
-      } catch (e) {
-        throw new Error("Groq output not valid JSON: " + content.slice(0, 200));
+        timeout: 60000
       }
-
-      return {
-        isFire: !!parsed.isFire,
-        fireConfidence: clamp01(parsed.fireConfidence),
-        suspectedAIGenerated: !!parsed.suspectedAIGenerated,
-        aiGenConfidence: clamp01(parsed.aiGenConfidence),
-        reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map(String).slice(0, 10) : [],
-        model
-      };
-    } catch (axiosError) {
-      lastError = normalizeGroqError(axiosError, model);
-
-      if (!shouldFallbackToNextModel(axiosError)) {
-        throw lastError;
-      }
-
-      console.warn(`Groq model failed, trying next candidate: ${lastError.message}`);
-    }
+    );
+  } catch (axiosError) {
+    throw normalizeGroqError(axiosError, model);
   }
 
-  throw lastError || new Error("Groq API request failed");
+  const content = resp.data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Groq returned empty content");
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    throw new Error("Groq output not valid JSON: " + content.slice(0, 200));
+  }
+
+  return {
+    isFire: !!parsed.isFire,
+    fireConfidence: clamp01(parsed.fireConfidence),
+    suspectedAIGenerated: !!parsed.suspectedAIGenerated,
+    aiGenConfidence: clamp01(parsed.aiGenConfidence),
+    reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map(String).slice(0, 10) : [],
+    model
+  };
 }
 
 function clamp01(v) {
   const n = Number(v);
   if (Number.isNaN(n)) return 0;
   return Math.max(0, Math.min(1, n));
-}
-
-function getModelCandidates() {
-  const configured = String(process.env.GROQ_VISION_MODEL || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  const defaults = [
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
-    "meta-llama/llama-4-scout-17b-16e-instruct"
-  ];
-
-  return [...configured, ...defaults.filter((model) => !configured.includes(model))];
 }
 
 function normalizeGroqError(axiosError, model) {
@@ -123,17 +99,4 @@ function normalizeGroqError(axiosError, model) {
 
   return new Error(`Groq API request failed for model ${model}: ${axiosError.message}`);
 }
-
-function shouldFallbackToNextModel(axiosError) {
-  if (!axiosError.response) {
-    return false;
-  }
-
-  const status = axiosError.response.status;
-  const errData = axiosError.response.data;
-  const code = errData?.error?.code;
-
-  return status === 404 || code === "model_not_found";
-}
-
 module.exports = { analyzeImageWithGroq };
