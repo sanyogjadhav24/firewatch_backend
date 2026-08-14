@@ -4,7 +4,7 @@ async function analyzeImageWithGroq(imageUrl) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY missing");
 
-  const model = String(process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-maverick-17b-128e-instruct").trim();
+  const model = String(process.env.GROQ_VISION_MODEL || "qwen/qwen3-vl-32b-instruct").trim();
 
   const prompt = `
 You are a safety/validation classifier for a fire reporting app.
@@ -94,7 +94,15 @@ function normalizeGroqError(axiosError, model) {
     const status = axiosError.response.status;
     const statusText = axiosError.response.statusText || "";
     const errData = axiosError.response.data;
-    return new Error(`Groq API error ${status} ${statusText} for model ${model}: ${JSON.stringify(errData).slice(0, 200)}`);
+    const base = `Groq API error ${status} ${statusText} for model ${model}: ${JSON.stringify(errData).slice(0, 200)}`;
+
+    if (status === 404 || errData?.error?.code === "model_not_found") {
+      return new Error(
+        `${base} Set GROQ_VISION_MODEL to a vision-capable model you can access, such as qwen/qwen3-vl-32b-instruct, then redeploy.`
+      );
+    }
+
+    return new Error(base);
   }
 
   return new Error(`Groq API request failed for model ${model}: ${axiosError.message}`);
