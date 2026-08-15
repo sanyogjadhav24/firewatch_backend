@@ -4,7 +4,7 @@ async function analyzeImageWithOpenRouter(imageUrl) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
 
-  const model = String(process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free").trim();
+  const model = String(process.env.OPENROUTER_MODEL || "openrouter/free").trim();
   const appName = String(process.env.OPENROUTER_APP_NAME || "FireWatch Backend").trim();
   const appUrl = String(process.env.OPENROUTER_APP_URL || "").trim();
 
@@ -68,9 +68,16 @@ Rules:
 
   let parsed;
   try {
-    parsed = typeof content === "string" ? JSON.parse(content) : JSON.parse(content?.[0]?.text || "{}");
+    parsed = parseOpenRouterJson(content);
   } catch (e) {
-    throw new Error("OpenRouter output not valid JSON: " + String(content).slice(0, 200));
+    return {
+      isFire: false,
+      fireConfidence: 0,
+      suspectedAIGenerated: false,
+      aiGenConfidence: 0,
+      reasons: ["OpenRouter returned non-JSON response: " + summarizeContent(content)],
+      model
+    };
   }
 
   return {
@@ -87,6 +94,43 @@ function clamp01(v) {
   const n = Number(v);
   if (Number.isNaN(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function parseOpenRouterJson(content) {
+  const raw = extractRawContent(content).trim();
+  if (!raw) throw new Error("empty response");
+
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(raw.slice(start, end + 1));
+    }
+
+    throw new Error("non-json response");
+  }
+}
+
+function extractRawContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .join("\n");
+  }
+  if (content && typeof content.text === "string") return content.text;
+  return content ? JSON.stringify(content) : "";
+}
+
+function summarizeContent(content) {
+  const raw = extractRawContent(content).replace(/\s+/g, " ").trim();
+  return raw.slice(0, 200) || "empty response";
 }
 
 function normalizeOpenRouterError(axiosError, model) {
