@@ -181,78 +181,21 @@ router.post("/reports", requireAuth, upload.single("image"), async (req, res) =>
       status: "PENDING_AI"
     });
 
-    // Respond immediately so app can poll
+    const shouldAnalyzeInline = Boolean(process.env.VERCEL) || String(process.env.AI_ANALYSIS_INLINE || "").toLowerCase() === "true";
+
+    if (shouldAnalyzeInline) {
+      const finalState = await analyzeAndPersistReport(report._id, report.image.url);
+      return res.json({ reportId: String(report._id), ...finalState });
+    }
+
+    // Respond immediately so app can poll in non-serverless/local runs.
     res.json({ reportId: String(report._id), status: "PENDING_AI" });
 
     // Analyze in "background" (no queue, but async after response)
-    setImmediate(async () => {
-      try {
-        await connectDb();
-
-        console.log(`Starting AI analysis for report ${report._id}...`);
-        const aiStartTime = Date.now();
-        
-        const ai = await analyzeImageWithOpenRouter(report.image.url);
-        
-        console.log(`✅ AI analysis completed in ${Date.now() - aiStartTime}ms for report ${report._id}`);
-
-        // Decision rules (same as our plan)
-        let status = "REJECTED_AI";
-        if (ai.isFire && ai.fireConfidence >= 0.7 && !ai.suspectedAIGenerated) {
-          status = "SUBMITTED";
-        } else {
-          status = "REJECTED_AI";
-          if (ai.reasons.length === 0) {
-            ai.reasons = ["Image did not meet submission requirements"];
-          }
-        }
-
-        await Report.findByIdAndUpdate(
-          report._id,
-          {
-            status,
-            aiResult: {
-              isFire: ai.isFire,
-              fireConfidence: ai.fireConfidence,
-              suspectedAIGenerated: ai.suspectedAIGenerated,
-              aiGenConfidence: ai.aiGenConfidence,
-              reasons: ai.reasons,
-              model: ai.model,
-              checkedAt: new Date()
-            }
-          },
-          { new: true }
-        );
-      } catch (e) {
-        console.error(`❌ AI analysis failed for report ${report._id}:`, e.message);
-        if (e.response) {
-          console.error("API response status:", e.response.status);
-          console.error("API response data:", JSON.stringify(e.response.data).slice(0, 500));
-        }
-        
-        try {
-          await connectDb();
-
-          await Report.findByIdAndUpdate(
-            report._id,
-            {
-              status: "REJECTED_AI",
-              aiResult: {
-                isFire: false,
-                fireConfidence: 0,
-                suspectedAIGenerated: false,
-                aiGenConfidence: 0,
-                reasons: ["AI verification failed: " + e.message],
-                model: process.env.OPENROUTER_MODEL || "",
-                checkedAt: new Date()
-              }
-            },
-            { new: true }
-          );
-        } catch (updateErr) {
-          console.error(`❌ Failed to persist AI error state for report ${report._id}:`, updateErr.message);
-        }
-      }
+    setImmediate(() => {
+      analyzeAndPersistReport(report._id, report.image.url).catch((e) => {
+        console.error(`❌ Unhandled AI analysis failure for report ${report._id}:`, e.message);
+      });
     });
   } catch (e) {
     console.error("POST /reports error:", e);
@@ -316,5 +259,75 @@ router.post("/reports/:id/override", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Server error", detail: e.message });
   }
 });
+
+async function analyzeAndPersistReport(reportId, imageUrl) {
+  await connectDb();
+
+  console.log(`Starting AI analysis for report ${reportId}...`);
+  const aiStartTime = Date.now();
+
+  try {
+    const ai = await analyzeImageWithOpenRouter(imageUrl);
+
+    console.log(`✅ AI analysis completed in ${Date.now() - aiStartTime}ms for report ${reportId}`);
+
+    let status = "REJECTED_AI";
+    if (ai.isFire && ai.fireConfidence >= 0.7 && !ai.suspectedAIGenerated) {
+      status = "SUBMITTED";
+    }
+
+    if (status === "REJECTED_AI" && ai.reasons.length === 0) {
+      ai.reasons = ["Image did not meet submission requirements"];
+    }
+
+    const aiResult = {
+      isFire: ai.isFire,
+      fireConfidence: ai.fireConfidence,
+      suspectedAIGenerated: ai.suspectedAIGenerated,
+      aiGenConfidence: ai.aiGenConfidence,
+      reasons: ai.reasons,
+      model: ai.model,
+      checkedAt: new Date()
+    };
+
+    await Report.findByIdAndUpdate(
+      reportId,
+      {
+        status,
+        aiResult
+      },
+      { new: true }
+    );
+
+    return { status, aiResult };
+  } catch (e) {
+    console.error(`❌ AI analysis failed for report ${reportId}:`, e.message);
+    if (e.response) {
+      console.error("API response status:", e.response.status);
+      console.error("API response data:", JSON.stringify(e.response.data).slice(0, 500));
+    }
+
+    const aiResult = {
+      isFire: false,
+      fireConfidence: 0,
+      suspectedAIGenerated: false,
+      aiGenConfidence: 0,
+      reasons: ["AI verification failed: " + e.message],
+      model: process.env.OPENROUTER_MODEL || "",
+      checkedAt: new Date()
+    };
+
+    await Report.findByIdAndUpdate(
+      reportId,
+      {
+        status: "REJECTED_AI",
+        aiResult
+      },
+      { new: true }
+    );
+
+    return { status: "REJECTED_AI", aiResult };
+  }
+}
 
 module.exports = router;
